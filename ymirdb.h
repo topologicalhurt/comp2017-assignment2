@@ -20,20 +20,40 @@
 #include <stdbool.h>
 #include <ctype.h>
 
+
 #define LOG_ENTRY(e) {\
-  printf("\n");\
-  for(size_t i = 0; i < e.length; i++) {\
-    printf("E%lu: %d ", i, e.values[i].value);\
+  printf("\nENTRY ASSOCIATED WITH KEY: '%s'\n ", e -> key);\
+  for(size_t i = 0; i < e -> length; i++) {\
+    printf("E%lu: %d ", i, ((e -> values)[i].value));\
   }\
   printf("\n");\
 }
 
-#define LOG_ARGS(j, args) {\
+#define LOG_ARGS(args, l) {\
   printf("\nARGS: [");\
-  for(size_t i = 0; i < j - 1; i++) {\
+  for(size_t i = 0; i < l - 1; i++) {\
     printf("%s, ", args[i]);\
   }\
-  printf("%s]\n", args[j - 1]);\
+  printf("%s]\n", args[l - 1]);\
+}
+
+#define LOG_LL(head) {\
+  printf("\nDB:");\
+  size_t i = 0;\
+  entry * tmp;\
+  tmp = head;\
+  while(tmp) {\
+    printf("\n  ENTRY # %lu:\n  [", i++);\
+    size_t j = 0;\
+    size_t l = (tmp -> length) - 1;\
+    for(; j < l; j++) {\
+      printf("X%lu: %d, ", j, ((tmp -> values)[j]).value);\
+    }\
+    printf("X%lu: %d]", j, ((tmp -> values)[l]).value);\
+    tmp = tmp -> next;\
+  }\
+  free(tmp);\
+  printf("\n");\
 }
 
 enum item_type {
@@ -71,6 +91,37 @@ struct entry {
   entry** backward; // these entries depend on this
 };
 
+inline void destroy_entry(entry * e) {
+  /* !!!TODO: NEED TO FREE FORWARD AND BACKWARD!!! */
+  if(e) {
+    free(e -> values);
+    free(e);
+  }
+}
+
+inline void shallow_copy_entry(entry ** e1, const entry * e2) {
+  *e1 = malloc(sizeof(struct entry));
+  **e1 = *e2;
+}
+
+// Deep copy entry by reference
+inline void dcer(entry ** e1, const entry * e2) {
+  /* !!!TODO: NEED TO DEEP COPY FORWARD AND BACKWARD !!!*/
+  *e1 = malloc(sizeof(struct entry));
+  **e1 = *e2;
+  (*e1) -> values = malloc(sizeof(struct element) * e2 -> length);
+  (*e1) -> values = e2 -> values;
+}
+
+// Deep copy entry by absolute reference
+inline void dcar(entry ** e1, const entry * e2) {
+  /* !!!TODO: NEED TO DEEP COPY FORWARD AND BACKWARD !!!*/
+  *e1 = malloc(sizeof(struct entry));
+  **e1 = *e2;
+  (*e1) -> values = malloc(sizeof(struct element) * e2 -> length);
+  memcpy((*e1) -> values, e2 -> values, sizeof(struct element) * e2 -> length);
+}
+
 struct snapshot {
   int id;
   entry* entries;
@@ -86,7 +137,7 @@ void uppers(char * line) {
   }
 }
 
-char * read_delim(char line[], size_t * argc, size_t start) {
+char * read_delim(const char line[], size_t * argc, const size_t start) {
 
   size_t i = start;
   while(i < MAX_LINE && line[i] != '\0' && line[i] != '\n'
@@ -107,11 +158,10 @@ char * read_delim(char line[], size_t * argc, size_t start) {
     // Catch Error
   }
   ret = tmp;
-  free(tmp);
   return ret;
 }
 
-char ** read_args(char line[], size_t ll, size_t * nargs) {
+char ** read_args(const char line[], const size_t ll, size_t * nargs) {
 
   if(ll <= 1) return NULL;
 
@@ -128,27 +178,39 @@ char ** read_args(char line[], size_t ll, size_t * nargs) {
     memcpy(ret[j], tmp, l);
     ret[j] = realloc(ret[j], l);
     j++;
+    free(tmp);
+  }
+  for(i = j; i < MAX_ARGS; i++) {
+    free(ret[i]);
   }
   char ** tmp = realloc(ret, j * sizeof(char*));
   if(!tmp) {
     // Catch Error
   }
   ret = tmp;
-
   #if DEBUG
-    LOG_ARGS(j, ret);
+    LOG_ARGS(ret, j);
   #endif
-  *nargs = j - 1;
+  *nargs = j;
   return ret;
 }
 
-inline bool is_key(char * k) {
+inline bool is_key(const char * k) {
   return strlen(k) < MAX_KEY && !isdigit(k[0]);
 }
 
-inline bool is_simple(char ** args, size_t nargs) {
-  for(size_t i = 0; i < nargs; i++) {
-    if(is_key(args[i])) {
+inline bool is_num(const char * s) {
+  for(size_t i = 0; i < strlen(s); i++) {
+    if(!isdigit(s[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline bool is_simple(char ** args, const size_t nargs, const size_t start) {
+  for(size_t i = start; i < nargs; i++) {
+    if(!is_num(args[i])) {
       return false;
     }
   }
@@ -157,7 +219,7 @@ inline bool is_simple(char ** args, size_t nargs) {
 
 // TODO: PROPERLY GIVE CREDIT FOR DJB2 HASH IMPLEMENTATION //
 // FULL CREDIT TO:
-inline uint64_t djb2h(char *str) {
+inline uint64_t djb2h(const char *str) {
   uint64_t hash = 5381;
   int32_t c;
   while ((c = *str++))
