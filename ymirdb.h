@@ -1,16 +1,22 @@
 #ifndef YMIRDB_H
 #define YMIRDB_H
 
-#define MAX_KEY 16
-#define MAX_LINE 1024
+// LIMS
+#define MAX_KEY 0x10
+#define MAX_LINE 0x400
 #define MAX_ARGS (MAX_LINE >> 1) - 1
-#define NUM_BUCKETS 256
+#define ENTRY_BUFF 0x40 // Num. of entries before realloc
+#define KEY_BUFF 0x40 // Num. keys before realloc
 
 // HASHED COMMAND VALUES
-#define SET 0x31
-#define GET 0x25
-#define PUSH 0x65
-#define APPEND 0x1D
+#define SET 0xB881D31
+#define GET 0xB87EA25
+#define PUSH 0x17C8A6265
+#define APPEND 0x652A5530C1D
+#define DBSET 0x310CF31DB7
+#define DBGET 0x310CF2EAAB
+#define DBPUSH 0x652AB5573AB
+#define DBAPPEND 0x1AE5AAB32786E3
 
 #define DEBUG true
 
@@ -25,6 +31,14 @@
   printf("\nENTRY ASSOCIATED WITH KEY: '%s'\n ", e -> key);\
   for(size_t i = 0; i < e -> length; i++) {\
     printf("E%lu: %d ", i, ((e -> values)[i].value));\
+  }\
+  printf("\n");\
+}
+
+#define LOG_VALS(v, n) {\
+  printf("\nVALUES: \n ");\
+  for(size_t i = 0; i < n; i++) {\
+    printf("V%lu: %d ", i, v[i].value);\
   }\
   printf("\n");\
 }
@@ -64,6 +78,7 @@ enum item_type {
 typedef struct element element;
 typedef struct entry entry;
 typedef struct snapshot snapshot;
+typedef struct kargs kargs;
 
 struct element {
   enum item_type type;
@@ -77,7 +92,8 @@ struct entry {
   char key[MAX_KEY];
   bool isSimp;
   element * values;
-  size_t length;
+  size_t length; // Number of elements in values
+  size_t vSize; // Size of values in bytes
 
   entry* next;
   entry* prev;
@@ -91,11 +107,12 @@ struct entry {
   entry** backward; // these entries depend on this
 };
 
-inline void destroy_entry(entry * e) {
+inline void destroy_entry(entry ** e) {
   /* !!!TODO: NEED TO FREE FORWARD AND BACKWARD!!! */
-  if(e) {
-    free(e -> values);
-    free(e);
+  if(*e) {
+    free((*e) -> values);
+    free(*e);
+    *e = NULL;
   }
 }
 
@@ -107,8 +124,7 @@ inline void shallow_copy_entry(entry ** e1, const entry * e2) {
 // Deep copy entry by reference
 inline void dcer(entry ** e1, const entry * e2) {
   /* !!!TODO: NEED TO DEEP COPY FORWARD AND BACKWARD !!!*/
-  *e1 = malloc(sizeof(struct entry));
-  **e1 = *e2;
+  shallow_copy_entry(e1, e2);
   (*e1) -> values = malloc(sizeof(struct element) * e2 -> length);
   (*e1) -> values = e2 -> values;
 }
@@ -116,8 +132,7 @@ inline void dcer(entry ** e1, const entry * e2) {
 // Deep copy entry by absolute reference
 inline void dcar(entry ** e1, const entry * e2) {
   /* !!!TODO: NEED TO DEEP COPY FORWARD AND BACKWARD !!!*/
-  *e1 = malloc(sizeof(struct entry));
-  **e1 = *e2;
+  shallow_copy_entry(e1, e2);
   (*e1) -> values = malloc(sizeof(struct element) * e2 -> length);
   memcpy((*e1) -> values, e2 -> values, sizeof(struct element) * e2 -> length);
 }
@@ -224,7 +239,7 @@ inline uint64_t djb2h(const char *str) {
   int32_t c;
   while ((c = *str++))
       hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-  return hash % NUM_BUCKETS;
+  return hash;
 }
 
 const char* HELP =
