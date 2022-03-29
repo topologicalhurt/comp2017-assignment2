@@ -166,6 +166,15 @@ inline void init_entry(entry ** e) {
 	(*e) -> backward = NULL;
 }
 
+inline void swap_values(entry ** e, const size_t i, const size_t j) {
+  element * tmp;
+  tmp = malloc(sizeof(struct element));
+  *tmp = ((*e) -> values)[i];
+  ((*e) -> values)[i] = ((*e) -> values)[j];
+  ((*e) -> values)[j] = *tmp;
+  free(tmp);
+}
+
 inline void shallow_copy_entry(entry ** e1, const entry * e2) {
   *e1 = malloc(sizeof(struct entry));
   **e1 = *e2;
