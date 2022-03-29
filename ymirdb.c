@@ -8,6 +8,16 @@
 
 1) FIX INVALID ARGS PROVIDED (E.G letters instead of numbers)
 2) ASSIGN RELEVANT STATES' TO KEYS
+3) EXTENSIVE TESTING TO FIND HEAP CORRUPTION BUG
+*/
+
+/*
+<POTENTIAL MAJOR EFFICIENCY IMPROVEMENTS>
+1) USING A HASHED LINKED LIST FOR SEARCHES
+2) IMPLEMENTING THIS AS STACK-BASED I.E STATS CALCULATED AT ENTRY TIME
+NOT AFTER ENTRY OF DATA (WHICH REQUIRES A SEARCH.)
+3) USING A HASHMAP FOR KEY COLLISION
+4) USING A MORE EFFICIENT SORT METHOD
 */
 
 #include <stdio.h>
@@ -23,6 +33,7 @@ extern inline uint64_t djb2h(const char * str);
 extern inline bool is_key(const char * k);
 extern inline bool is_simple(char ** args, const size_t nargs, const size_t start);
 extern inline bool is_num(const char * s);
+extern inline void swap_values(entry ** e, const size_t i, const size_t j);
 extern inline void destroy_entry(entry ** e);
 extern inline void init_entry(entry ** e);
 extern inline void clean_entry(entry * e);
@@ -69,7 +80,7 @@ bool key_in_db(const char * k) {
 	return false;
 }
 
-void append_key(char *** keys, char * k) {
+void append_key(char *** keys, const char * k) {
 
 	if(++nkeys >= kallocs * KEY_BUFF) {
 		char ** tmp;
@@ -93,7 +104,7 @@ void append_entry(entry ** e, element * ent, const size_t ents) {
 	(*e) -> length += ents;
 }
 
-void push_entry(entry ** e, element * ent, const size_t ents) {
+void push_entry(entry ** e, const element * ent, const size_t ents) {
 	expand_entry(e, ents);
 	// Shift by number of elements being added
 	memmove(&(((*e) -> values)[ents]),
@@ -105,14 +116,13 @@ void push_entry(entry ** e, element * ent, const size_t ents) {
 
 void set_entry(entry ** e, element * ent, const size_t ents) {
 	free((*e) -> values);
-	(*e) -> length = 0;
+	(*e) -> length = ents;
 	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
 	expand_entry(e, ents);
 	memcpy((*e) -> values, ent, ents * sizeof(struct element));
-	(*e) -> length += ents;
 }
 
-element * get_vals_from_args(char ** args, size_t nargs) {
+element * get_vals_from_args(char ** args, const size_t nargs) {
 	element * vals = malloc((nargs * sizeof(struct element)));
 	for(size_t i = 0; i < nargs; i++) {
 		struct element tmp;
@@ -125,12 +135,11 @@ element * get_vals_from_args(char ** args, size_t nargs) {
 
 // PROCESS KEYS THEN VALS.
 // Returns values to add to entry according to command
-element * pktv(entry ** e, char ** args, size_t nargs) {
+element * pktv(entry ** e, char ** args, const size_t nargs) {
 	// Create new entry if key doesn't exist. Otherwise, modify existing entry
-	nargs -= 2;
 	memcpy((*e) -> key, args[1], strlen(args[1]));
-	(*e) -> isSimp = is_simple(args, nargs, 2);
-	if((*e) -> isSimp) return get_vals_from_args(args, nargs);
+	(*e) -> isSimp = is_simple(args, nargs - 2, 2);
+	if((*e) -> isSimp) return get_vals_from_args(args, nargs - 2);
 	else return NULL; // General case...
 }
 
@@ -163,6 +172,7 @@ void append_db(entry ** tail, entry ** e) {
 		dbHead = dbHead ? dbHead : nn;
 	}
 	*tail = nn;
+	destroy_entry(e);
 }
 
 // Push entry into the db
@@ -174,10 +184,11 @@ void push_db(entry ** head, entry ** e) {
 	if(*head) (*head) -> prev = nn;
 	else dbTail = nn;
 	*head = nn;
+	destroy_entry(e);
 }
 
 // Again we could hash the linked list according to key for O(1) search...
-entry * search_db(entry * head, char * k) {
+entry * search_db(entry * head, const char * k) {
 	entry * tmp;
 	tmp = head;
 	while(tmp) {
@@ -197,7 +208,7 @@ void command_help() {
 	printf("%s\n", HELP);
 }
 
-void cmd_set(entry ** e, char ** args, size_t nargs) {
+void cmd_set(entry ** e, char ** args, const size_t nargs) {
 	element * vals;
 	vals = pktv(e, args, nargs);
 	set_entry(e, vals, nargs - 2);
@@ -232,6 +243,64 @@ void cmd_append(entry ** e, char ** args, size_t nargs) {
 	#endif
 	free(vals);
 	printf(CONFIRMATION_MSG);
+}
+
+void cmd_rev(entry ** e) {
+	size_t l = ((*e) -> length) - 1;
+	for(size_t i = 0; i < l/2; i++) {
+		swap_values(e, i, l - i);
+	}
+}
+
+void cmd_uniq(entry ** e) {
+
+	size_t l = ((*e) -> length) - 1;
+	if(l <= 0) return;
+
+	LOG_VALS((*e) -> values, (*e) -> length);
+
+	size_t uniqC = 0;
+	size_t i = 0;
+
+	for(; i < l; i++) {
+		// Overwrite potential non-unique entries with unique entries
+		((*e) -> values)[uniqC++] = ((*e) -> values)[i];
+		// Continue until next unique entry.
+		while(((*e) -> values)[i].value == ((*e) -> values)[i + 1].value) {
+			i++;
+		}
+	}
+
+	// Account for the last value by comparing it to adjacent value
+	if(i > 2) {
+		if(((*e) -> values)[i - 1].value != ((*e) -> values)[l].value) {
+			((*e) -> values)[uniqC++] = ((*e) -> values)[l];
+		}
+	}
+
+	(*e) -> length = uniqC;
+	LOG_VALS((*e) -> values, (*e) -> length);
+}
+
+void cmd_sort(entry ** e) {
+	// Sort in ascend. order using basic bubble sort
+ size_t i, j;
+ size_t l = (*e) -> length;
+ bool swapped;
+
+ for (i = 0; i < l-1; i++)
+ {
+   swapped = false;
+   for (j = 0; j < l-i-1; j++)
+   {
+      if (((*e) -> values)[j].value > ((*e) -> values)[j+1].value)
+      {
+         swap_values(e, j, j + 1);
+         swapped = true;
+      }
+   }
+   if (swapped == false) break;
+	}
 }
 
 void cmd_db_set(entry * e) {
@@ -288,7 +357,6 @@ int main(void) {
 						append_key(&keys, args[1]);
 						cmd_set(&tmp, args, nargs);
 						append_db(&dbTail, &tmp);
-						destroy_entry(&tmp);
 					}
 				}
 				break;
@@ -316,7 +384,6 @@ int main(void) {
 						append_key(&keys, args[1]);
 						cmd_push(&tmp, args, nargs);
 						append_db(&dbTail, &tmp);
-						destroy_entry(&tmp);
 					}
 				}
 				break;
@@ -336,7 +403,6 @@ int main(void) {
 						append_key(&keys, args[1]);
 						cmd_append(&tmp, args, nargs);
 						append_db(&dbTail, &tmp);
-						destroy_entry(&tmp);
 					}
 				}
 				break;
@@ -344,6 +410,8 @@ int main(void) {
 				case LIST:
 					// FORMAT: <CMD> <CMD>
 					if(nargs == 2) {
+						// This is type safe?
+						uppers(args[1]);
 						switch(djb2h(args[1])) {
 							case KEYS:
 								if(nkeys > 0) {
@@ -360,14 +428,46 @@ int main(void) {
 								printf(COMMAND_NOT_FOUND);
 							break;
 						}
+					} else {
+						printf(COMMAND_NOT_FOUND);
 					}
 				break;
 
 				case REV:
 					if(nargs == 2 && is_key(args[1])) {
+							entry * tmp;
+							tmp = search_db(dbHead, args[1]);
+							if(tmp) {
+								cmd_rev(&tmp);
+							} else {
+								printf(FETCH_NONEXISTENT_KEY);
+						 }
 					}
 				break;
 
+				case UNIQ:
+					if(nargs == 2 && is_key(args[1])) {
+							entry * tmp;
+							tmp = search_db(dbHead, args[1]);
+							if(tmp) {
+								cmd_uniq(&tmp);
+							} else {
+								printf(FETCH_NONEXISTENT_KEY);
+						 }
+					}
+				break;
+
+				case SORT:
+					if(nargs == 2 && is_key(args[1])) {
+							entry * tmp;
+							tmp = search_db(dbHead, args[1]);
+							if(tmp) {
+								cmd_sort(&tmp);
+							} else {
+								printf(FETCH_NONEXISTENT_KEY);
+						 }
+					}
+				break;
 
 				#if DEBUG
 					case DBSET:
@@ -389,6 +489,7 @@ int main(void) {
 						}
 						break;
 				#endif
+
 				default:
 					// Command not recognised
 					printf(COMMAND_NOT_FOUND);
