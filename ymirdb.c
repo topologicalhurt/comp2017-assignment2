@@ -84,11 +84,7 @@ bool key_in_db(char * k) {
 	return false;
 }
 
-bool append_key(char *** keys, char * k) {
-
-	if(key_in_db(k)) {
-		return false;
-	}
+void append_key(char *** keys, char * k) {
 
 	if(++nkeys >= kallocs * KEY_BUFF) {
 		char ** tmp;
@@ -100,7 +96,6 @@ bool append_key(char *** keys, char * k) {
 	}
 	(*keys)[nkeys - 1] = malloc(strlen(k));
 	memcpy((*keys)[nkeys - 1], k, strlen(k));
-	return true;
 }
 
 void append_entry(entry ** e, element * ent, const size_t ents) {
@@ -205,6 +200,7 @@ entry * search_db(entry * head, char * k) {
 		}
 		tmp = tmp -> next;
 	}
+	destroy_entry(&tmp);
 	return NULL;
 }
 
@@ -259,15 +255,11 @@ element * cmd_db_get() {
 }
 
 void cmd_db_push(entry * e) {
-	LOG_ENTRY(e);
 	push_db(&dbHead, &e);
-	LOG_LL(dbHead);
 }
 
 void cmd_db_append(entry * e) {
-	LOG_ENTRY(e);
 	append_db(&dbTail, &e);
-	LOG_LL(dbHead);
 }
 
 int main(void) {
@@ -297,13 +289,18 @@ int main(void) {
 				case SET:
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
-					// Key in db...
-					if(!append_key(&keys, args[1])) {
-						curre = search_db(dbHead, args[1]);
+					if(key_in_db(args[1])) {
+						// Modify entry in db
+						entry * tmp = search_db(dbHead, args[1]);
+						cmd_set(&tmp, args, nargs);
 					} else {
-						curre = NULL;
+						entry * tmp;
+						dcar(&tmp, curre);
+						append_key(&keys, args[1]);
+						cmd_set(&tmp, args, nargs);
+						append_db(&dbTail, &tmp);
+						destroy_entry(&tmp);
 					}
-					cmd_set(&curre, args, nargs);
 				}
 				break;
 				case GET:
@@ -312,15 +309,35 @@ int main(void) {
 				case PUSH:
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
-					append_key(&keys, args[1]);
-					cmd_push(&curre, args, nargs);
+					if(key_in_db(args[1])) {
+						// Modify entry in db
+						entry * tmp = search_db(dbHead, args[1]);
+						cmd_push(&tmp, args, nargs);
+					} else {
+						entry * tmp;
+						dcar(&tmp, curre);
+						append_key(&keys, args[1]);
+						cmd_push(&tmp, args, nargs);
+						append_db(&dbTail, &tmp);
+						destroy_entry(&tmp);
+					}
 				}
 				break;
 				case APPEND:
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
-					append_key(&keys, args[1]);
-					cmd_append(&curre, args, nargs);
+					if(key_in_db(args[1])) {
+						// Modify entry in db
+						entry * tmp = search_db(dbHead, args[1]);
+						cmd_append(&tmp, args, nargs);
+					} else {
+						entry * tmp;
+						dcar(&tmp, curre);
+						append_key(&keys, args[1]);
+						cmd_append(&tmp, args, nargs);
+						append_db(&dbTail, &tmp);
+						destroy_entry(&tmp);
+					}
 				}
 				break;
 				#if DEBUG
@@ -355,6 +372,7 @@ int main(void) {
 			#if DEBUG
 				if(curre) LOG_ENTRY(curre);
 				LOG_ARGS(keys, nkeys);
+				LOG_LL(dbHead);
 			#endif
 
 			destroy_args(args, nargs);
