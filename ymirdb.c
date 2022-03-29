@@ -24,6 +24,8 @@ extern inline bool is_key(const char * k);
 extern inline bool is_simple(char ** args, const size_t nargs, const size_t start);
 extern inline bool is_num(const char * s);
 extern inline void destroy_entry(entry ** e);
+extern inline void init_entry(entry ** e);
+extern inline void clean_entry(entry * e);
 extern inline void shallow_copy_entry(entry ** e1, const entry * e2);
 extern inline void dcer(entry ** e1, const entry * e2);
 extern inline void dcar(entry ** e1, const entry * e2);
@@ -32,27 +34,10 @@ extern inline void dcar(entry ** e1, const entry * e2);
 // static size_t nargs = 0;
 static entry * dbHead = NULL; // db header
 static entry * dbTail = NULL; // db tail
-static entry * curre = NULL; // current entry
 
 static char ** keys = NULL;
 static size_t nkeys = 0;
 static size_t kallocs = 0;
-
-void init_entry(entry ** e) {
-	*e = malloc(sizeof(struct entry));
-	(*e) -> values = malloc(ENTRY_BUFF);
-	(*e) -> vSize = ENTRY_BUFF;
-	(*e) -> length = 0;
-	(*e) -> isSimp = NULL;
-	(*e) -> next = NULL;
-	(*e) -> prev = NULL;
-	(*e) -> forward_size = 0;
-	(*e) -> forward_max = 0;
-	(*e) -> backward_size = 0;
-	(*e) -> backward_max = 0;
-	(*e) -> forward = NULL;
-	(*e) -> backward = NULL;
-}
 
 void expand_entry(entry ** e, const size_t ents) {
 
@@ -75,7 +60,7 @@ void expand_entry(entry ** e, const size_t ents) {
 
 // Determines if key in db already
 // Again... so much faster if using hashmap!
-bool key_in_db(char * k) {
+bool key_in_db(const char * k) {
 	for(size_t i = 0; i < nkeys; i++) {
 		if(strcmp(k, keys[i]) == 0) {
 			return true;
@@ -94,14 +79,16 @@ void append_key(char *** keys, char * k) {
 		}
 		*keys = tmp;
 	}
-	(*keys)[nkeys - 1] = malloc(strlen(k));
+	(*keys)[nkeys - 1] = malloc(strlen(k) + 1);
 	memcpy((*keys)[nkeys - 1], k, strlen(k));
+	// (*keys)[nkeys - 1][strlen(k)] = '\0';
 }
 
 void append_entry(entry ** e, element * ent, const size_t ents) {
 	expand_entry(e, ents);
 	// Copy into reallocated memory
-	memcpy(&(((*e) -> values)[(*e) -> length]),
+	size_t offset = (*e) -> length;
+	memcpy(&(((*e) -> values)[offset]),
 	ent, ents * sizeof(struct element));
 	(*e) -> length += ents;
 }
@@ -117,10 +104,9 @@ void push_entry(entry ** e, element * ent, const size_t ents) {
 }
 
 void set_entry(entry ** e, element * ent, const size_t ents) {
-	// Be aware we may need to destroy and re-init whole structure later on
 	free((*e) -> values);
 	(*e) -> length = 0;
-	(*e) -> values = malloc(ENTRY_BUFF);
+	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
 	expand_entry(e, ents);
 	memcpy((*e) -> values, ent, ents * sizeof(struct element));
 	(*e) -> length += ents;
@@ -200,7 +186,6 @@ entry * search_db(entry * head, char * k) {
 		}
 		tmp = tmp -> next;
 	}
-	destroy_entry(&tmp);
 	return NULL;
 }
 
@@ -220,6 +205,7 @@ void cmd_set(entry ** e, char ** args, size_t nargs) {
 		LOG_VALS(vals, nargs - 2);
 	#endif
 	free(vals);
+	printf(CONFIRMATION_MSG);
 }
 
 element * cmd_get() {
@@ -234,6 +220,7 @@ void cmd_push(entry ** e, char ** args, size_t nargs) {
 		LOG_VALS(vals, nargs - 2);
 	#endif
 	free(vals);
+	printf(CONFIRMATION_MSG);
 }
 
 void cmd_append(entry ** e, char ** args, size_t nargs) {
@@ -244,6 +231,7 @@ void cmd_append(entry ** e, char ** args, size_t nargs) {
 		LOG_VALS(vals, nargs - 2);
 	#endif
 	free(vals);
+	printf(CONFIRMATION_MSG);
 }
 
 void cmd_db_set(entry * e) {
@@ -269,8 +257,6 @@ int main(void) {
 	size_t nargs;
 	keys = malloc(KEY_BUFF * sizeof(char *));
 
-	init_entry(&curre);
-
 	while (true) {
 		printf("> ");
 
@@ -286,16 +272,19 @@ int main(void) {
 
 			// Control flow based on hashed command
 			switch(djb2h(args[0])) {
+
 				case SET:
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
 					if(key_in_db(args[1])) {
 						// Modify entry in db
 						entry * tmp = search_db(dbHead, args[1]);
-						cmd_set(&tmp, args, nargs);
+						if(tmp) {
+							cmd_set(&tmp, args, nargs);
+						}
 					} else {
 						entry * tmp;
-						dcar(&tmp, curre);
+						init_entry(&tmp);
 						append_key(&keys, args[1]);
 						cmd_set(&tmp, args, nargs);
 						append_db(&dbTail, &tmp);
@@ -303,19 +292,27 @@ int main(void) {
 					}
 				}
 				break;
+
 				case GET:
-				// Check args
+					if(nargs == 2 && is_key(args[1])) {
+						entry * tmp = search_db(dbHead, args[1]);
+						if(tmp) {PRINT_ENTRY(tmp);}
+						else printf(FETCH_NONEXISTENT_KEY); // Do something when key not found.
+					}
 				break;
+
 				case PUSH:
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
 					if(key_in_db(args[1])) {
 						// Modify entry in db
 						entry * tmp = search_db(dbHead, args[1]);
-						cmd_push(&tmp, args, nargs);
+						if(tmp) {
+							cmd_push(&tmp, args, nargs);
+						}
 					} else {
 						entry * tmp;
-						dcar(&tmp, curre);
+						init_entry(&tmp);
 						append_key(&keys, args[1]);
 						cmd_push(&tmp, args, nargs);
 						append_db(&dbTail, &tmp);
@@ -323,16 +320,19 @@ int main(void) {
 					}
 				}
 				break;
+
 				case APPEND:
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
 					if(key_in_db(args[1])) {
 						// Modify entry in db
 						entry * tmp = search_db(dbHead, args[1]);
-						cmd_append(&tmp, args, nargs);
+						if(tmp) {
+							cmd_append(&tmp, args, nargs);
+						}
 					} else {
 						entry * tmp;
-						dcar(&tmp, curre);
+						init_entry(&tmp);
 						append_key(&keys, args[1]);
 						cmd_append(&tmp, args, nargs);
 						append_db(&dbTail, &tmp);
@@ -340,11 +340,39 @@ int main(void) {
 					}
 				}
 				break;
+
+				case LIST:
+					// FORMAT: <CMD> <CMD>
+					if(nargs == 2) {
+						switch(djb2h(args[1])) {
+							case KEYS:
+								if(nkeys > 0) {
+									PRINT_KEYS(keys, nkeys);
+								}
+							break;
+							case ENTRIES:
+
+							break;
+							case SNAPSHOTS:
+
+							break;
+							default:
+								printf(COMMAND_NOT_FOUND);
+							break;
+						}
+					}
+				break;
+
+				case REV:
+					if(nargs == 2 && is_key(args[1])) {
+					}
+				break;
+
+
 				#if DEBUG
 					case DBSET:
 						// Check args
 						if(nargs == 2 && is_key((args)[1])) {
-							cmd_db_set(curre);
 						}
 						break;
 					case DBGET:
@@ -353,32 +381,28 @@ int main(void) {
 					case DBPUSH:
 						// Check args
 						if(nargs == 2 && is_key((args)[1])) {
-							cmd_db_push(curre);
 						}
 						break;
 					case DBAPPEND:
 						// Check args
 						if(nargs == 2 && is_key((args)[1])) {
-							cmd_db_append(curre);
 						}
 						break;
 				#endif
 				default:
 					// Command not recognised
-					printf("ERROR: cmd not found.\n");
+					printf(COMMAND_NOT_FOUND);
 					break;
 			}
 
 			#if DEBUG
-				if(curre) LOG_ENTRY(curre);
-				LOG_ARGS(keys, nkeys);
-				LOG_LL(dbHead);
+				if(nkeys > 0) LOG_ARGS(keys, nkeys);
+				if(dbHead) LOG_LL(dbHead);
 			#endif
 
 			destroy_args(args, nargs);
 		}
 	}
-	destroy_entry(&curre);
 	destroy_args(keys, nkeys);
 	destroy_db(dbHead);
 	return 0;
