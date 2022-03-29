@@ -13,12 +13,34 @@
 #define GET 0xB87EA25
 #define PUSH 0x17C8A6265
 #define APPEND 0x652A5530C1D
+#define SNAPSHOT 0x1AE64326BF8B35
+#define ROLLBACK 0x1AE639A0CEDE2F
+#define LIST 0x17C87FDE1
+#define KEYS 0x17C876141
+#define ENTRIES 0xD0A87F429F9F
+#define SNAPSHOTS 0x377AEA7FEB0F228
+#define SUM 0xB881F3A
+#define MIN 0xB880429
+#define MAX 0xB88032B
+#define REV 0xB8818F2
+#define UNIQ 0x17C8D0142
+#define SORT 0x17C8BEDED
+#define DROP 0x17C83C09A
+#define CHECKOUT 0x1AE5A29D29F01B
 #define DBSET 0x310CF31DB7
 #define DBGET 0x310CF2EAAB
 #define DBPUSH 0x652AB5573AB
 #define DBAPPEND 0x1AE5AAB32786E3
 
-#define DEBUG true
+// MSG'S:
+#define FETCH_NONEXISTENT_KEY "no such key\n"
+#define CONFIRMATION_MSG "ok\n"
+#define COMMAND_NOT_FOUND "ERROR: cmd not found\n"
+#define KEYS_NOT_FOUND "no keys\n"
+#define EMPTY_ENTRY "nil\n"
+
+
+#define DEBUG false
 
 #include <stddef.h>
 #include <sys/types.h>
@@ -35,6 +57,14 @@
   printf("\n");\
 }
 
+#define PRINT_ENTRY(e) {\
+  printf("[");\
+  for(size_t i = 0; i < e -> length - 1; i++) {\
+    printf("%d ", (e -> values)[i].value);\
+  }\
+  printf("%d]\n", (e -> values)[e -> length - 1].value);\
+}
+
 #define LOG_VALS(v, n) {\
   printf("\nVALUES: \n ");\
   for(size_t i = 0; i < n; i++) {\
@@ -49,6 +79,12 @@
     printf("%s, ", args[i]);\
   }\
   printf("%s]\n", args[l - 1]);\
+}
+
+#define PRINT_KEYS(keys, nkeys) {\
+  for(size_t i = 0; i < nkeys; i++) {\
+    printf("%s\n", keys[i]);\
+  }\
 }
 
 #define LOG_LL(head) {\
@@ -109,11 +145,25 @@ struct entry {
 
 inline void destroy_entry(entry ** e) {
   /* !!!TODO: NEED TO FREE FORWARD AND BACKWARD!!! */
-  if(*e) {
-    free((*e) -> values);
-    free(*e);
-    *e = NULL;
-  }
+  free((*e) -> values);
+  free(*e);
+  *e = NULL;
+}
+
+inline void init_entry(entry ** e) {
+	*e = malloc(sizeof(struct entry));
+	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
+	(*e) -> vSize = ENTRY_BUFF;
+	(*e) -> length = 0;
+	(*e) -> isSimp = NULL;
+	(*e) -> next = NULL;
+	(*e) -> prev = NULL;
+	(*e) -> forward_size = 0;
+	(*e) -> forward_max = 0;
+	(*e) -> backward_size = 0;
+	(*e) -> backward_max = 0;
+	(*e) -> forward = NULL;
+	(*e) -> backward = NULL;
 }
 
 inline void shallow_copy_entry(entry ** e1, const entry * e2) {
