@@ -35,7 +35,6 @@ static entry * dbHead = NULL; // db header
 static entry * dbTail = NULL; // db tail
 static snapshot * snapHead = NULL; // snapshot header
 static snapshot * snapTail = NULL; // snapshot tail
-static size_t numSnaps = 0;
 static size_t nkeys = 0;
 
 extern inline uint64_t djb2h(const char * str) {
@@ -86,14 +85,131 @@ static inline void swap_values(entry ** e, const size_t i, const size_t j) {
   free(tmp);
 }
 
+void destroy_refs(entry ** e) {
+	for(int i = 0; i < FORWARD_MAX; i++) {
+		free(((*e) -> forward)[i]);
+	}
+	for(int i = 0; i < BACKWARD_MAX; i++) {
+		free(((*e) -> backward)[i]);
+	}
+	free((*e) -> forward);
+	free((*e) -> backward);
+	(*e) -> forward = NULL;
+	(*e) -> backward = NULL;
+}
+
+void destroy_entry(entry ** e) {
+  /* !!!TODO: NEED TO FREE FORWARD AND BACKWARD!!! */
+	if((*e) -> forward && (*e) -> backward) destroy_refs(e);
+  free((*e) -> values);
+  free(*e);
+}
+
+void destroy_db(entry * head) {
+	entry * tmp;
+	while(head) {
+		tmp = head;
+		head = head -> next;
+		destroy_entry(&tmp);
+	}
+}
+
+void destroy_snapshot(snapshot * s) {
+	destroy_db(s -> entries);
+	free(s);
+}
+
+
+void destroy_snapshots(snapshot * head) {
+	snapshot * tmp;
+	while(head) {
+		tmp = head;
+		head = head -> next;
+		destroy_snapshot(tmp);
+	}
+}
+
+void destroy_args(char *** args, size_t nargs) {
+	for(size_t i = 0; i < nargs; i++) {
+    free((*args)[i]);
+	}
+  free(*args);
+	*args = NULL;
+}
+
+void create_refs(entry ** e) {
+	(*e) -> forward = malloc(sizeof(struct entry) * FORWARD_MAX);
+	(*e) -> backward = malloc(sizeof(struct entry) * BACKWARD_MAX);
+	for(int i = 0; i < FORWARD_MAX; i++) {
+		((*e) -> forward)[i] = malloc(sizeof(struct entry));
+	}
+	for(int i = 0; i < BACKWARD_MAX; i++) {
+		((*e) -> backward)[i] = malloc(sizeof(struct entry));
+	}
+}
+
+void init_entry(entry ** e) {
+	*e = malloc(sizeof(struct entry));
+	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
+	(*e) -> vSize = ENTRY_BUFF;
+	(*e) -> length = 0;
+	(*e) -> general = false;
+	(*e) -> next = NULL;
+	(*e) -> prev = NULL;
+	(*e) -> forward_size = 0;
+	// (*e) -> forward_max = 0;
+	(*e) -> backward_size = 0;
+	// (*e) -> backward_max = 0;
+	create_refs(e);
+}
+
+void clean_entry(entry ** e) {
+  free((*e) -> values);
+	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
+  (*e) -> vSize = 0;
+  (*e) -> length = 0;
+  (*e) -> general = false;
+  (*e) -> forward_size = 0;
+  // (*e) -> forward_max = 0;
+  (*e) -> backward_size = 0;
+  // (*e) -> backward_max = 0;
+	// destroy_refs(e);
+	// create_refs(e);
+}
+
+void init_snapshot(snapshot ** s) {
+  (*s) = malloc(sizeof(struct snapshot));
+	(*s) -> entries = NULL;
+	(*s) -> tail = NULL;
+  (*s) -> id = 1;
+  (*s) -> next = NULL;
+  (*s) -> prev = NULL;
+}
+
 static inline void shallow_copy_entry(entry ** e1, const entry * e2) {
   *e1 = malloc(sizeof(struct entry));
   **e1 = *e2;
 }
 
+static inline void shallow_copy_snap(snapshot ** s1, const snapshot * s2) {
+	*s1 = malloc(sizeof(struct snapshot));
+	**s1 = *s2;
+}
+
 static inline void copy_values(entry ** e1, const entry * e2) {
 	(*e1) -> values = malloc(sizeof(struct element) * e2 -> length);
 	memcpy((*e1) -> values, e2 -> values, sizeof(struct element) * e2 -> length);
+}
+
+static inline void copy_refs(entry ** e1, const entry * e2) {
+	memcpy((*e1) -> forward, e2 -> forward, sizeof(struct entry) * FORWARD_MAX);
+	memcpy((*e1) -> backward, e2 -> backward, sizeof(struct entry) * BACKWARD_MAX);
+	for(int i = 0; i < FORWARD_MAX; i++) {
+		((*e1) -> forward)[i] = (e2 -> forward)[i];
+	}
+	for(int i = 0; i < BACKWARD_MAX; i++) {
+		((*e1) -> backward)[i] = (e2 -> backward)[i];
+	}
 }
 
 // Deep copy entry by reference
@@ -108,6 +224,13 @@ static inline void dcar(entry ** e1, const entry * e2) {
   /* !!!TODO: NEED TO DEEP COPY FORWARD AND BACKWARD !!!*/
   shallow_copy_entry(e1, e2);
 	copy_values(e1, e2);
+	copy_refs(e1, e2);
+}
+
+void deep_copy_snap(snapshot ** s1, const snapshot * s2) {
+	shallow_copy_snap(s1, s2);
+	dcar(&((*s1) -> entries), s2 -> entries);
+	if(s2 -> tail) dcar(&((*s1) -> tail), s2 -> tail);
 }
 
 char * read_delim(const char line[], size_t * argc, const size_t start) {
@@ -187,81 +310,6 @@ void expand_entry(entry ** e, const size_t ents) {
 	}
 }
 
-void destroy_entry(entry ** e) {
-  /* !!!TODO: NEED TO FREE FORWARD AND BACKWARD!!! */
-  free((*e) -> values);
-  free(*e);
-}
-
-void destroy_db(entry * head) {
-	entry * tmp;
-	while(head) {
-		tmp = head;
-		head = head -> next;
-		destroy_entry(&tmp);
-	}
-}
-
-
-void destroy_snapshot(snapshot * head) {
-	snapshot * tmp;
-	while(head) {
-		tmp = head;
-		head = head -> next;
-		// entry * tmp2 = tmp -> entries;
-		// printf("\n ENTRY DELETED \n");
-		// PRINT_ENTRIES(tmp2);
-		destroy_db(tmp -> entries);
-		free(tmp);
-	}
-}
-
-void destroy_args(char *** args, size_t nargs) {
-	for(size_t i = 0; i < nargs; i++) {
-    free((*args)[i]);
-	}
-  free(*args);
-	*args = NULL;
-}
-
-void init_entry(entry ** e) {
-	*e = malloc(sizeof(struct entry));
-	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
-	(*e) -> vSize = ENTRY_BUFF;
-	(*e) -> length = 0;
-	(*e) -> isSimp = NULL;
-	(*e) -> next = NULL;
-	(*e) -> prev = NULL;
-	(*e) -> forward_size = 0;
-	(*e) -> forward_max = 0;
-	(*e) -> backward_size = 0;
-	(*e) -> backward_max = 0;
-	(*e) -> forward = NULL;
-	(*e) -> backward = NULL;
-}
-
-void clean_entry(entry ** e) {
-  free((*e) -> values);
-	(*e) -> values = malloc(ENTRY_BUFF * sizeof(struct element));
-  (*e) -> vSize = 0;
-  (*e) -> length = 0;
-  (*e) -> isSimp = NULL;
-  (*e) -> forward_size = 0;
-  (*e) -> forward_max = 0;
-  (*e) -> backward_size = 0;
-  (*e) -> backward_max = 0;
-  (*e) -> forward = NULL;
-  (*e) -> backward = NULL;
-}
-
-void init_snapshot(snapshot ** s) {
-  (*s) = malloc(sizeof(struct snapshot));
-	(*s) -> entries = NULL;
-  (*s) -> id = 0;
-  (*s) -> next = NULL;
-  (*s) -> prev = NULL;
-}
-
 // OPTIMIZATIONS:
 // 1) Iterate over memory instead of copy pasting around it
 // 2) expand_entry() doesn't alloc memory properly? Fix.
@@ -272,16 +320,19 @@ void append_entry(entry ** e, element * ent, const size_t ents) {
 
 	// Copy into reallocated memory
 	size_t n = ((*e) -> length) + ents;
-	element * tmp = malloc(n * sizeof(struct element));
+	// element * tmp = malloc(n * sizeof(struct element));
 	element * tmp2 = realloc((*e) -> values, n * sizeof(struct element));
 	if(!tmp2) {
 		// Do something...
 	}
 	(*e) -> values = tmp2;
-	memcpy(&(((*e) -> values)[(*e) -> length]),
-	ent, ents * sizeof(struct element));
+	for(int i = 0; i < ents; i++) {
+		((*e) -> values)[(*e) -> length + i] = ent[i];
+	}
+	// memcpy(&(((*e) -> values)[(*e) -> length]),
+	// ent, ents * sizeof(struct element));
 	(*e) -> length += ents;
-	free(tmp);
+	// free(tmp);
 }
 
 void push_entry(entry ** e, const element * ent, const size_t ents) {
@@ -359,26 +410,6 @@ void pluck_entry(entry ** e, const int ind) {
 	free(tmp);
 }
 
-element * get_vals_from_args(char ** args, const size_t nargs) {
-	element * vals = malloc((nargs * sizeof(struct element)));
-	for(size_t i = 0; i < nargs; i++) {
-		struct element tmp;
-		tmp.type = INTEGER;
-		tmp.value = atoi(args[i + 2]);
-		vals[i] = tmp;
-	}
-	return vals;
-}
-
-// PROCESS KEYS THEN VALS.
-// Returns values to add to entry according to command
-element * pktv(entry ** e, char ** args, const size_t nargs) {
-	memcpy((*e) -> key, args[1], strlen(args[1]) + 1);
-	(*e) -> isSimp = is_simple(args, nargs - 2, 2);
-	if((*e) -> isSimp) return get_vals_from_args(args, nargs - 2);
-	else return NULL; // General case...
-}
-
 // Append all entries into db
 void append_db(entry ** tail, entry ** head, entry ** e) {
 	entry * nn;
@@ -407,12 +438,67 @@ void push_db(entry ** head, entry ** tail, entry ** e) {
 	nkeys++;
 }
 
+// THESE NEED TO WORK WITH GENERAL REF's TOO!
+
+int get_min_of_entry(const entry * e) {
+	int min = 0x7FFFFFFF;
+	for(int i = 0; i < e -> length; i++) {
+		min = (e -> values)[i].value <= min ? (e -> values)[i].value : min;
+	}
+	return min;
+}
+
+int get_max_of_entry(const entry * e) {
+	int max = 0x80000000;
+	for(int i = 0; i < e -> length; i++) {
+		max = (e -> values)[i].value >= max ? (e -> values)[i].value : max;
+	}
+	return max;
+}
+
+int sum_entry(entry * e) {
+	int sum = 0;
+	for(int i = 0; i < e -> length; i++) {
+		sum += (e -> values)[i].value;
+	}
+	return sum;
+}
+
 void remove_db(entry ** old, entry ** head, entry ** tail) {
 
-	if(!(*old) || !(*head) || !(*tail)) return;
+	if(!(*old)) return;
 
-	entry * oldNext;
-	entry * oldPrev;
+	// First case: Deleting the last remaining node -> set both pointers to NULL
+	// Second case: The head is the node to be deleted -> set the head to the forward adj. element
+	// Third case: The tail is the node to be deleted -> set the tail to the backward adj. element
+	if(*head == *old && *tail == *old) {
+		*head = NULL;
+		*tail = NULL;
+	} else if(*head == *old) {
+		*head = (*old) -> next;
+	} else if(*tail == *old) {
+		*tail = (*old) -> prev;
+	}
+
+	// 'bypass' / 'run around' the pointer to be deleted
+	if((*old) -> next) {
+		(*old) -> next -> prev = (*old) -> prev;
+
+	}
+
+	if((*old) -> prev) {
+		(*old) -> prev -> next = (*old) -> next;
+	}
+
+	destroy_entry(old);
+}
+
+void remove_snap(snapshot ** old, snapshot ** head, snapshot ** tail) {
+
+	if(!(*old)) return;
+
+	snapshot * oldNext;
+	snapshot * oldPrev;
 	oldNext = (*old) -> next;
 	oldPrev = (*old) -> prev;
 
@@ -437,8 +523,91 @@ void remove_db(entry ** old, entry ** head, entry ** tail) {
 		oldPrev -> next = oldNext;
 	}
 
-	destroy_entry(old);
-	nkeys--;
+	destroy_snapshot(*old);
+}
+
+// Again we could hash the linked list according to key for O(1) search...
+entry * search_db(entry * head, const char * k) {
+	entry * tmp;
+	tmp = head;
+	while(tmp) {
+		if(strcmp(k, tmp -> key) == 0) {
+			return tmp;
+		}
+		tmp = tmp -> next;
+	}
+	return NULL;
+}
+
+element * get_vals_from_args(char ** args, const size_t nargs, entry ** e, entry * head) {
+	memcpy((*e) -> key, args[1], strlen(args[1]) + 1);
+	element * vals = malloc((nargs * sizeof(struct element)));
+	for(size_t i = 0; i < nargs; i++) {
+		struct element tmp;
+		if(is_num(args[i + 2])) {
+			tmp.type = INTEGER;
+			tmp.value = atoi(args[i + 2]);
+		} else {
+			tmp.type = ENTRY;
+			tmp.entry = search_db(head, args[i + 2]);
+			(*e) -> forward_size++;
+			(*e) -> general = true;
+		}
+		vals[i] = tmp;
+	}
+	return vals;
+}
+
+// Check's and responds to if key not in db, valid, or self-referential
+// -1 if self-referential, 0 if valid, 1 if not in db.
+extern inline int8_t is_permitted_entry(char ** args, const size_t nargs,
+	entry * head) {
+	for(int i = 2; i < nargs; i++) {
+		// Cannot be self-referential
+		if(is_key(args[i])) {
+
+			entry * tmp;
+			tmp = search_db(head, args[i]);
+
+			if(strcmp(args[1], args[i]) == 0) {
+				printf(UNPERMITTED_REF);
+				return -1;
+			}
+			if(tmp) return 0;
+			else {printf(FETCH_NONEXISTENT_KEY); return 1;}
+		}
+	}
+	return 0;
+}
+
+void get_db_from_snap(snapshot * s, entry ** head, entry ** tail) {
+	*head = NULL;
+	*tail = NULL;
+	entry * tmp = s -> tail;
+	while(tmp) {
+		append_db(tail, head, &tmp);
+		tmp = tmp -> prev;
+	}
+}
+
+void clean_db(entry * head) {
+	entry * tmp = head;
+	while(tmp) {
+		clean_entry(&tmp);
+		tmp = tmp -> next;
+	}
+}
+
+snapshot * get_snap_from_index(snapshot * head, size_t index) {
+	size_t i = 0;
+	snapshot * tmp = head;
+	while(tmp) {
+		if(++i == index) {
+			return tmp;
+		}
+		tmp = tmp -> next;
+	}
+	return NULL;
 }
 
 // Deep copies all the entries in the db into e
@@ -460,7 +629,7 @@ void deep_copy_db(snapshot ** s, entry * tail)  {
 
 	entry * nh = NULL; // The current ptr. to be copied into as we iterate over db
 	entry * nt = NULL; // new tail ~ marked as unused ~
-	
+
 	while(tmp) {
 
 		append_db(&nt, &nh, &tmp); // Copy into the current snapshot entry the absolute ref. to db entry
@@ -472,8 +641,35 @@ void deep_copy_db(snapshot ** s, entry * tail)  {
 		// last -> next = tmp2;
 		tmp = tmp -> prev; // Add db entries to snapshot backwards  (reading order)
 	}
-	dcar(&((*s) -> entries), nh);
-	if(nh) destroy_entry(&nh);
+	(*s) -> entries = nh;
+	(*s) -> tail = nt;
+}
+
+void pluck_snap(snapshot ** sHead, snapshot ** sTail, char * k) {
+	//snapshot * next = NULL; // if we delete tmp, the next adjacent member
+	snapshot * tmp2;
+	//deep_copy_snap(&tmp2, *sHead);
+	tmp2 = *sHead;
+
+	while(tmp2) {
+		entry * search = search_db(tmp2 -> entries, k);
+		if(search) {
+			// Only entry in list -> delete snapshot.
+			// Otherwise, remove specific entry found.
+			// if(!(tmp2 -> entries -> next) && !(tmp2 -> entries -> prev)) {
+			// 	next = tmp2 -> next;
+			// 	remove_snap(&tmp2, sHead, sTail);
+			// 	tmp2 = next;
+			// 	continue;
+			// } else {
+			// 	remove_db(&search, &(tmp2 -> entries), &(tmp2 -> tail));
+			// 	search = NULL;
+			// }
+			remove_db(&search, &(tmp2 -> entries), &(tmp2 -> tail));
+			search = NULL;
+		}
+		tmp2 = tmp2 -> next;
+	}
 }
 
 // ~ CURRENT STATES GIVEN BY DB HEADER. ~
@@ -492,25 +688,6 @@ void append_snap(snapshot ** tail, snapshot ** head) {
 		*head = *head ? *head : ns;
 	}
 	*tail = ns;
-	numSnaps++;
-}
-
-// void push_snap(snapshot ** head, entry ** e) {
-//   snapshot * ns;
-// 	/* TODO */
-// }
-
-// Again we could hash the linked list according to key for O(1) search...
-entry * search_db(entry * head, const char * k) {
-	entry * tmp;
-	tmp = head;
-	while(tmp) {
-		if(strcmp(k, tmp -> key) == 0) {
-			return tmp;
-		}
-		tmp = tmp -> next;
-	}
-	return NULL;
 }
 
 void command_bye() {
@@ -523,7 +700,7 @@ void command_help() {
 
 void cmd_set(entry ** e, char ** args, const size_t nargs) {
 	element * vals;
-	vals = pktv(e, args, nargs);
+	vals = get_vals_from_args(args, nargs - 2, e, dbHead);
 	set_entry(e, vals, nargs - 2);
 	#if DEBUG
 		LOG_VALS(vals, nargs - 2);
@@ -535,7 +712,7 @@ void cmd_set(entry ** e, char ** args, const size_t nargs) {
 void cmd_push(entry ** e, char ** args, size_t nargs) {
 	element * vals;
 
-	vals = pktv(e, args, nargs);
+	vals = get_vals_from_args(args, nargs - 2, e, dbHead);
 
 	push_entry(e, vals, nargs - 2);
 	#if DEBUG
@@ -547,7 +724,7 @@ void cmd_push(entry ** e, char ** args, size_t nargs) {
 
 void cmd_append(entry ** e, char ** args, size_t nargs) {
 	element * vals;
-	vals = pktv(e, args, nargs);
+	vals = get_vals_from_args(args, nargs - 2, e, dbHead);
 	append_entry(e, vals, nargs - 2);
 	#if DEBUG
 		LOG_VALS(vals, nargs - 2);
@@ -643,6 +820,8 @@ int main(void) {
 
 				case SET:
 
+					if(is_permitted_entry(args, nargs, dbHead) != 0) break;
+
 					// Check args
 					if(nargs > 2 && is_key((args)[1])) {
 
@@ -656,7 +835,7 @@ int main(void) {
 								break;
 							}
 
-							// Modify entry in db
+							// Modify existing entry in db
 							entry * tmp = search_db(dbHead, args[1]);
 							if(tmp) {
 								clean_entry(&tmp);
@@ -675,6 +854,9 @@ int main(void) {
 				break;
 
 				case PUSH:
+
+				if(is_permitted_entry(args, nargs, dbHead) != 0) break;
+
 				// Check args
 				if(nargs > 2 && is_key((args)[1])) {
 					// Modify entry in db
@@ -688,6 +870,9 @@ int main(void) {
 				break;
 
 				case APPEND:
+
+					if(is_permitted_entry(args, nargs, dbHead) != 0) break;
+
 					// Check args
 					if(nargs > 2 && is_key((args)[1])) {
 						// Modify entry in db
@@ -704,7 +889,7 @@ int main(void) {
 					if(nargs == 1) {
 						if(dbHead) {
 							append_snap(&snapTail, &snapHead);
-							LOG_SNAP(snapHead);
+							printf("saved as snapshot %d\n\n", snapTail -> id);
 						}
 					}
 				break;
@@ -715,12 +900,67 @@ int main(void) {
 							tmp = search_db(dbHead, args[1]);
 							if(tmp) {
 								// Delete from both snapshot and db
+								remove_db(&tmp, &dbHead, &dbTail);
+								pluck_snap(&snapHead, &snapTail, args[1]);
+								nkeys--;
 								printf(CONFIRMATION_MSG);
 							} else {
-								printf(FETCH_NONEXISTENT_KEY);
-						 }
+								// Remove from just snapshot
+								pluck_snap(&snapHead, &snapTail, args[1]);
+								printf(CONFIRMATION_MSG);
+							}
+							#if DEBUG
+								LOG_SNAP(snapHead);
+							#endif
 					}
 				break;
+
+				case DROP:
+					if(nargs == 2 && is_num(args[1])) {
+						snapshot * tmp;
+						tmp = get_snap_from_index(snapHead, atoi(args[1]));
+						if(tmp) {
+							remove_snap(&tmp, &snapHead, &snapTail);
+							printf(CONFIRMATION_MSG);
+						} else {
+							printf(NO_SUCH_SNAPSHOT);
+						}
+					}
+				break;
+
+				case ROLLBACK:
+					if(nargs == 2 && is_num(args[1])) {
+
+						snapshot * tmp = get_snap_from_index(snapHead, atoi(args[1]));
+						if(tmp) {
+							destroy_db(dbHead);
+							get_db_from_snap(tmp, &dbHead, &dbTail);
+							snapTail = tmp;
+							if(tmp -> next) {
+								destroy_snapshots(tmp -> next);
+								snapTail -> next = NULL;
+							}
+
+							printf(CONFIRMATION_MSG);
+						} else {
+							printf(NO_SUCH_SNAPSHOT);
+						}
+					}
+					break;
+
+				case CHECKOUT:
+					if(nargs == 2 && is_num(args[1])) {
+
+						snapshot * tmp = get_snap_from_index(snapHead, atoi(args[1]));
+						if(tmp) {
+							destroy_db(dbHead);
+							get_db_from_snap(tmp, &dbHead, &dbTail);
+							printf(CONFIRMATION_MSG);
+						} else {
+							printf(NO_SUCH_SNAPSHOT);
+						}
+					}
+					break;
 
 				case LIST:
 					// FORMAT: <CMD> <CMD>
@@ -729,7 +969,7 @@ int main(void) {
 						uppers(args[1]);
 						switch(djb2h(args[1])) {
 							case KEYS:
-								if(nkeys > 0) {
+								if(dbTail) {
 									PRINT_KEYS(dbTail);
 								} else {
 									printf(NO_KEY_LIST);
@@ -743,10 +983,9 @@ int main(void) {
 								}
 							break;
 							case SNAPSHOTS:
-								if(numSnaps == 0) {
-									printf(NO_SNAPSHOTS);
-								}
+								PRINT_SNAP_IDS(snapTail);
 							break;
+
 							default:
 								printf(COMMAND_NOT_FOUND);
 							break;
@@ -762,6 +1001,7 @@ int main(void) {
 							tmp = search_db(dbHead, args[1]);
 							if(tmp) {
 								cmd_rev(&tmp);
+								printf(CONFIRMATION_MSG);
 							} else {
 								printf(FETCH_NONEXISTENT_KEY);
 						 }
@@ -844,16 +1084,70 @@ int main(void) {
 				break;
 
 				case DEL:
+
 					if(nargs == 2 && is_key(args[1])) {
 						entry * tmp;
 						tmp = search_db(dbHead, args[1]);
 						if(tmp) {
 							remove_db(&tmp, &dbHead, &dbTail);
+							nkeys--;
 							printf(CONFIRMATION_MSG);
 						} else {
 							printf(FETCH_NONEXISTENT_KEY);
 						}
 					}
+				break;
+
+				case MIN:
+					if(nargs == 2 && is_key(args[1])) {
+						entry * tmp;
+						tmp = search_db(dbHead, args[1]);
+						printf("%d\n\n", get_min_of_entry(tmp));
+					}
+				break;
+
+				case MAX:
+					if(nargs == 2 && is_key(args[1])) {
+						entry * tmp;
+						tmp = search_db(dbHead, args[1]);
+						printf("%d\n\n", get_max_of_entry(tmp));
+					}
+				break;
+
+				case SUM:
+					if(nargs == 2 && is_key(args[1])) {
+						entry * tmp;
+						tmp = search_db(dbHead, args[1]);
+						printf("%d\n\n", sum_entry(tmp));
+					}
+				break;
+
+				case LEN:
+					if(nargs == 2 && is_key(args[1])) {
+						entry * tmp;
+						tmp = search_db(dbHead, args[1]);
+						printf("%zu\n\n", tmp -> length);
+					}
+				break;
+
+				case TYPE:
+					if(nargs == 2 && is_key(args[1])) {
+						entry * tmp;
+						tmp = search_db(dbHead, args[1]);
+						if(tmp -> general) {
+							printf(TYPE_GENERAL);
+						} else {
+							printf(TYPE_SIMPLE);
+						}
+					}
+				break;
+
+				case FORWARD:
+
+				break;
+
+				case BACKWARD:
+
 				break;
 
 				default:
@@ -867,6 +1161,6 @@ int main(void) {
 	}
 	if (args) destroy_args(&args, nargs);
 	if (dbHead) destroy_db(dbHead);
-	if (snapHead) destroy_snapshot(snapHead);
+	if (snapHead) destroy_snapshots(snapHead);
 	return 0;
 }
